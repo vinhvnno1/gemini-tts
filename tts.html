@@ -231,46 +231,6 @@
             font-size: 0.8rem;
             margin-top: 0.5rem;
         }
-
-        /* Progress bar */
-        .progress-container {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            margin-top: 1rem;
-            padding: 0.5rem;
-            background: var(--bg-secondary);
-            border-radius: var(--radius-md);
-        }
-
-        .progress-bar {
-            flex: 1;
-            height: 8px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 4px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .progress-bar::after {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            height: 100%;
-            width: var(--progress, 0%);
-            background: var(--gradient-primary);
-            border-radius: 4px;
-            transition: width 0.3s ease;
-        }
-
-        .progress-text {
-            color: var(--text-secondary);
-            font-size: 0.85rem;
-            font-weight: 500;
-            min-width: 45px;
-            text-align: right;
-        }
     </style>
 </head>
 
@@ -294,17 +254,12 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                     </svg>
                     Phát
                 </button>
-                <button class="btn btn-secondary" id="pausePlayBtn">
-                    <svg id="pauseIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        stroke-width="2">
+                <button class="btn btn-secondary" id="stopBtn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="6" y="4" width="4" height="16"></rect>
                         <rect x="14" y="4" width="4" height="16"></rect>
                     </svg>
-                    <svg id="playIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        stroke-width="2" style="display:none;">
-                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                    </svg>
-                    <span id="pausePlayText">Dừng</span>
+                    Dừng
                 </button>
                 <button class="btn btn-secondary" id="clearBtn">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -316,11 +271,6 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
 
             <div class="visualizer">
                 <canvas id="visualizer"></canvas>
-            </div>
-
-            <div class="progress-container">
-                <div class="progress-bar" id="progressBar"></div>
-                <span class="progress-text" id="progressText">0%</span>
             </div>
 
             <div class="status">
@@ -340,37 +290,23 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.ws = null;
                 this.isConnected = false;
                 this.isSpeaking = false;
-                this.isStopped = false;
-                this.isPaused = false;
                 this.audioContext = null;
                 this.pendingChunks = []; // Chunks waiting to be played
                 this.playQueue = []; // Batched audio ready to play
-                this.activeSources = []; // Track active audio sources
                 this.isPlaying = false;
                 this.BATCH_SIZE = 25; // Play every 25 chunks
                 this.scheduledTime = 0;
 
-                // Progress tracking
-                this.totalChunksReceived = 0;
-                this.chunksPlayed = 0;
-                this.totalDuration = 0;
-                this.playedDuration = 0;
-
                 // DOM elements
                 this.textInput = document.getElementById('textInput');
                 this.speakBtn = document.getElementById('speakBtn');
-                this.pausePlayBtn = document.getElementById('pausePlayBtn');
-                this.pauseIcon = document.getElementById('pauseIcon');
-                this.playIcon = document.getElementById('playIcon');
-                this.pausePlayText = document.getElementById('pausePlayText');
+                this.stopBtn = document.getElementById('stopBtn');
                 this.clearBtn = document.getElementById('clearBtn');
                 this.statusDot = document.getElementById('statusDot');
                 this.statusText = document.getElementById('statusText');
                 this.charCount = document.getElementById('charCount');
                 this.visualizerCanvas = document.getElementById('visualizer');
                 this.canvasCtx = this.visualizerCanvas.getContext('2d');
-                this.progressBar = document.getElementById('progressBar');
-                this.progressText = document.getElementById('progressText');
 
                 this.init();
             }
@@ -378,7 +314,7 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             init() {
                 // Event listeners
                 this.speakBtn.addEventListener('click', () => this.speak());
-                this.pausePlayBtn.addEventListener('click', () => this.togglePausePlay());
+                this.stopBtn.addEventListener('click', () => this.stop());
                 this.clearBtn.addEventListener('click', () => this.clear());
                 this.textInput.addEventListener('input', () => this.updateCharCount());
 
@@ -404,11 +340,6 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             updateStatus(status, text) {
                 this.statusDot.className = 'status-dot ' + status;
                 this.statusText.textContent = text;
-            }
-
-            updateProgress(percent) {
-                this.progressBar.style.setProperty('--progress', `${percent}%`);
-                this.progressText.textContent = `${Math.round(percent)}%`;
             }
 
             connect() {
@@ -459,25 +390,13 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             async speak() {
-                // If paused, resume instead of restart
-                if (this.isPaused && this.pendingChunks.length > 0) {
-                    this.resume();
-                    return;
-                }
-
                 const text = this.textInput.value.trim();
                 if (!text || !this.isConnected) return;
 
-                this.isStopped = false;
-                this.isPaused = false;
                 this.isSpeaking = true;
                 this.pendingChunks = [];
                 this.playQueue = [];
-                this.activeSources = [];
                 this.scheduledTime = 0;
-                this.totalChunksReceived = 0;
-                this.chunksPlayed = 0;
-                this.updateProgress(0);
                 this.updateStatus('speaking', 'Đang chuyển đổi...');
                 this.speakBtn.disabled = true;
 
@@ -492,85 +411,18 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 }));
             }
 
-            togglePausePlay() {
-                if (this.isPaused) {
-                    this.resume();
-                } else {
-                    this.pause();
-                }
-            }
-
-            updatePausePlayButton(showPlay) {
-                if (showPlay) {
-                    this.pauseIcon.style.display = 'none';
-                    this.playIcon.style.display = 'block';
-                    this.pausePlayText.textContent = 'Tiếp tục';
-                } else {
-                    this.pauseIcon.style.display = 'block';
-                    this.playIcon.style.display = 'none';
-                    this.pausePlayText.textContent = 'Dừng';
-                }
-            }
-
-            pause() {
-                // Preserve pending chunks for resume
-                this.isPaused = true;
+            stop() {
+                this.isSpeaking = false;
                 this.isPlaying = false;
-
-                // Stop current audio sources but keep pending chunks
-                for (const source of this.activeSources) {
-                    try {
-                        source.stop();
-                    } catch (e) {
-                        // Ignore errors if source already stopped
-                    }
+                this.pendingChunks = [];
+                this.playQueue = [];
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
                 }
-                this.activeSources = [];
-
-                // Suspend audio context instead of closing
-                if (this.audioContext && this.audioContext.state === 'running') {
-                    this.audioContext.suspend();
-                }
-
-                this.scheduledTime = 0;
                 this.speakBtn.disabled = false;
-                this.updatePausePlayButton(true); // Show play icon
-                this.updateStatus('connected', 'Tạm dừng');
+                this.updateStatus('connected', 'Đã dừng');
                 this.clearVisualizer();
-            }
-
-            resume() {
-                if (!this.isPaused) return;
-                if (this.pendingChunks.length === 0) {
-                    this.updateStatus('connected', 'Không có audio để phát tiếp');
-                    return;
-                }
-
-                this.isPaused = false;
-                this.isStopped = false;
-                this.isPlaying = true;
-                this.speakBtn.disabled = true;
-                this.updateStatus('speaking', 'Tiếp tục phát...');
-
-                // Resume audio context
-                if (this.audioContext && this.audioContext.state === 'suspended') {
-                    this.audioContext.resume();
-                }
-
-                // Create new audio context if closed
-                if (!this.audioContext || this.audioContext.state === 'closed') {
-                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                }
-
-                // Process all remaining chunks
-                this.processRemainingChunks();
-            }
-
-            processRemainingChunks() {
-                // Keep batching and playing until no more chunks
-                while (this.pendingChunks.length > 0 && !this.isStopped && !this.isPaused) {
-                    this.batchAndPlay(this.pendingChunks.length <= this.BATCH_SIZE);
-                }
             }
 
             clear() {
@@ -592,16 +444,8 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 const buffer = this.base64ToArrayBuffer(base64Data);
                 const pcm16 = new Int16Array(buffer);
                 this.pendingChunks.push(pcm16);
-                this.totalChunksReceived++;
 
-                const total = this.totalChunksReceived;
-
-                // If paused, just buffer don't play
-                if (this.isPaused) {
-                    this.updateStatus('connected', `Đang buffer: ${this.pendingChunks.length} chunks`);
-                    return;
-                }
-
+                const total = this.pendingChunks.length;
                 this.updateStatus('speaking', `Nhận ${total} chunks...`);
 
                 // Batch and play every BATCH_SIZE chunks
@@ -611,9 +455,6 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             batchAndPlay(isFinal) {
-                // Don't play if stopped or paused
-                if (this.isStopped || this.isPaused) return;
-
                 if (this.pendingChunks.length === 0) {
                     if (isFinal && !this.isPlaying) {
                         this.onPlaybackComplete();
@@ -661,9 +502,6 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 const source = this.audioContext.createBufferSource();
                 source.buffer = audioBuffer;
 
-                // Track this source for stopping
-                this.activeSources.push(source);
-
                 // Create analyser
                 const analyser = this.audioContext.createAnalyser();
                 analyser.fftSize = 256;
@@ -680,19 +518,7 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.visualize(analyser);
 
                 source.onended = () => {
-                    // Remove from active sources
-                    const idx = this.activeSources.indexOf(source);
-                    if (idx > -1) this.activeSources.splice(idx, 1);
-
-                    // Update progress
-                    this.chunksPlayed += chunksToPlay.length;
-                    if (this.totalChunksReceived > 0) {
-                        const progress = (this.chunksPlayed / this.totalChunksReceived) * 100;
-                        this.updateProgress(Math.min(progress, 100));
-                    }
-
                     // Check if more to play
-                    if (this.isStopped) return;
                     if (this.playQueue.length > 0 || this.pendingChunks.length > 0) {
                         // Continue playing
                     } else if (!this.isSpeaking) {
