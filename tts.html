@@ -336,6 +336,7 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.isConnected = false;
                 this.isSpeaking = false;
                 this.isStopped = false;
+                this.isPaused = false;
                 this.audioContext = null;
                 this.pendingChunks = []; // Chunks waiting to be played
                 this.playQueue = []; // Batched audio ready to play
@@ -450,10 +451,17 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             async speak() {
+                // If paused, resume instead of restart
+                if (this.isPaused && this.pendingChunks.length > 0) {
+                    this.resume();
+                    return;
+                }
+
                 const text = this.textInput.value.trim();
                 if (!text || !this.isConnected) return;
 
                 this.isStopped = false;
+                this.isPaused = false;
                 this.isSpeaking = true;
                 this.pendingChunks = [];
                 this.playQueue = [];
@@ -477,13 +485,11 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             stop() {
-                this.isStopped = true;
-                this.isSpeaking = false;
+                // This is now a PAUSE function - preserve pending chunks
+                this.isPaused = true;
                 this.isPlaying = false;
-                this.pendingChunks = [];
-                this.playQueue = [];
 
-                // Stop all active audio sources
+                // Stop current audio sources but keep pending chunks
                 for (const source of this.activeSources) {
                     try {
                         source.stop();
@@ -493,16 +499,31 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 }
                 this.activeSources = [];
 
-                // Close and recreate audio context
-                if (this.audioContext) {
-                    this.audioContext.close();
-                    this.audioContext = null;
+                // Suspend audio context instead of closing
+                if (this.audioContext && this.audioContext.state === 'running') {
+                    this.audioContext.suspend();
                 }
 
                 this.scheduledTime = 0;
                 this.speakBtn.disabled = false;
-                this.updateStatus('connected', 'Đã dừng');
+                this.updateStatus('connected', 'Tạm dừng');
                 this.clearVisualizer();
+            }
+
+            resume() {
+                if (!this.isPaused || this.pendingChunks.length === 0) return;
+
+                this.isPaused = false;
+                this.isStopped = false;
+                this.speakBtn.disabled = true;
+
+                // Resume audio context
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+
+                // Continue playing remaining chunks
+                this.batchAndPlay(true);
             }
 
             clear() {
