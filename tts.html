@@ -511,19 +511,37 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             resume() {
-                if (!this.isPaused || this.pendingChunks.length === 0) return;
+                if (!this.isPaused) return;
+                if (this.pendingChunks.length === 0) {
+                    this.updateStatus('connected', 'Không có audio để phát tiếp');
+                    return;
+                }
 
                 this.isPaused = false;
                 this.isStopped = false;
+                this.isPlaying = true;
                 this.speakBtn.disabled = true;
+                this.updateStatus('speaking', 'Tiếp tục phát...');
 
                 // Resume audio context
                 if (this.audioContext && this.audioContext.state === 'suspended') {
                     this.audioContext.resume();
                 }
 
-                // Continue playing remaining chunks
-                this.batchAndPlay(true);
+                // Create new audio context if closed
+                if (!this.audioContext || this.audioContext.state === 'closed') {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+
+                // Process all remaining chunks
+                this.processRemainingChunks();
+            }
+
+            processRemainingChunks() {
+                // Keep batching and playing until no more chunks
+                while (this.pendingChunks.length > 0 && !this.isStopped && !this.isPaused) {
+                    this.batchAndPlay(this.pendingChunks.length <= this.BATCH_SIZE);
+                }
             }
 
             clear() {
