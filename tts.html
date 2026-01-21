@@ -291,8 +291,9 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.isConnected = false;
                 this.isSpeaking = false;
                 this.audioContext = null;
-                this.audioQueue = [];
+                this.audioChunks = []; // Collect all chunks first
                 this.isPlaying = false;
+                this.scheduledTime = 0;
 
                 // DOM elements
                 this.textInput = document.getElementById('textInput');
@@ -369,16 +370,16 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             handleMessage(message) {
                 switch (message.type) {
                     case 'audio':
-                        this.queueAudio(message.data);
+                        this.addAudioChunk(message.data);
                         break;
                     case 'complete':
                         this.isSpeaking = false;
-                        if (!this.isPlaying) {
-                            this.updateStatus('connected', 'Hoàn thành');
-                        }
+                        // Play all collected audio
+                        this.playCollectedAudio();
                         break;
                     case 'error':
                         this.isSpeaking = false;
+                        this.speakBtn.disabled = false;
                         this.updateStatus('error', 'Lỗi: ' + message.message);
                         break;
                 }
@@ -389,7 +390,7 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 if (!text || !this.isConnected) return;
 
                 this.isSpeaking = true;
-                this.audioQueue = [];
+                this.audioChunks = [];
                 this.updateStatus('speaking', 'Đang chuyển đổi...');
                 this.speakBtn.disabled = true;
 
@@ -401,7 +402,12 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
 
             stop() {
                 this.isSpeaking = false;
-                this.audioQueue = [];
+                this.isPlaying = false;
+                this.audioChunks = [];
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
                 this.speakBtn.disabled = false;
                 this.updateStatus('connected', 'Đã dừng');
                 this.clearVisualizer();
@@ -422,51 +428,61 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 return bytes.buffer;
             }
 
-            pcm16ToFloat32(pcm16Buffer) {
-                const pcm16 = new Int16Array(pcm16Buffer);
-                const float32 = new Float32Array(pcm16.length);
-                for (let i = 0; i < pcm16.length; i++) {
-                    float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7FFF);
-                }
-                return float32;
-            }
-
-            queueAudio(base64Data) {
+            addAudioChunk(base64Data) {
                 const buffer = this.base64ToArrayBuffer(base64Data);
-                const float32 = this.pcm16ToFloat32(buffer);
-                this.audioQueue.push(float32);
-
-                this.updateStatus('speaking', 'Đang phát...');
-
-                if (!this.isPlaying) {
-                    this.playNextAudio();
-                }
+                const pcm16 = new Int16Array(buffer);
+                this.audioChunks.push(pcm16);
+                this.updateStatus('speaking', `Đang nhận... (${this.audioChunks.length} chunks)`);
             }
 
-            async playNextAudio() {
-                if (this.audioQueue.length === 0) {
-                    this.isPlaying = false;
+            async playCollectedAudio() {
+                if (this.audioChunks.length === 0) {
                     this.speakBtn.disabled = false;
-                    if (!this.isSpeaking) {
-                        this.updateStatus('connected', 'Hoàn thành');
-                    }
-                    this.clearVisualizer();
+                    this.updateStatus('connected', 'Không có audio');
                     return;
                 }
 
+                this.updateStatus('speaking', 'Đang phát...');
                 this.isPlaying = true;
 
-                if (!this.audioContext) {
-                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                        sampleRate: 24000
-                    });
+                // Merge all chunks into one buffer
+                const totalLength = this.audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                const mergedPcm = new Int16Array(totalLength);
+                let offset = 0;
+                for (const chunk of this.audioChunks) {
+                    mergedPcm.set(chunk, offset);
+                    offset += chunk.length;
                 }
 
-                const float32Data = this.audioQueue.shift();
+                // Convert to float32
+                const float32 = new Float32Array(mergedPcm.length);
+                for (let i = 0; i < mergedPcm.length; i++) {
+                    float32[i] = mergedPcm[i] / 32768.0;
+                }
+
+                // Create audio context with correct sample rate
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                // Gemini outputs 24kHz, resample to audioContext rate
+                const inputSampleRate = 24000;
+                const outputSampleRate = this.audioContext.sampleRate;
+
+                // Simple resampling
+                const resampleRatio = outputSampleRate / inputSampleRate;
+                const resampledLength = Math.floor(float32.length * resampleRatio);
+                const resampled = new Float32Array(resampledLength);
+
+                for (let i = 0; i < resampledLength; i++) {
+                    const srcIndex = i / resampleRatio;
+                    const srcIndexFloor = Math.floor(srcIndex);
+                    const srcIndexCeil = Math.min(srcIndexFloor + 1, float32.length - 1);
+                    const t = srcIndex - srcIndexFloor;
+                    resampled[i] = float32[srcIndexFloor] * (1 - t) + float32[srcIndexCeil] * t;
+                }
 
                 // Create audio buffer
-                const audioBuffer = this.audioContext.createBuffer(1, float32Data.length, 24000);
-                audioBuffer.copyToChannel(float32Data, 0);
+                const audioBuffer = this.audioContext.createBuffer(1, resampled.length, outputSampleRate);
+                audioBuffer.copyToChannel(resampled, 0);
 
                 // Create analyser for visualization
                 const analyser = this.audioContext.createAnalyser();
@@ -482,7 +498,11 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.visualize(analyser);
 
                 source.onended = () => {
-                    this.playNextAudio();
+                    this.isPlaying = false;
+                    this.speakBtn.disabled = false;
+                    this.audioChunks = [];
+                    this.updateStatus('connected', 'Hoàn thành');
+                    this.clearVisualizer();
                 };
 
                 source.start();
