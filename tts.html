@@ -231,6 +231,46 @@
             font-size: 0.8rem;
             margin-top: 0.5rem;
         }
+
+        /* Progress bar */
+        .progress-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding: 0.5rem;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+        }
+
+        .progress-bar {
+            flex: 1;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: var(--progress, 0%);
+            background: var(--gradient-primary);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-weight: 500;
+            min-width: 45px;
+            text-align: right;
+        }
     </style>
 </head>
 
@@ -273,6 +313,11 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 <canvas id="visualizer"></canvas>
             </div>
 
+            <div class="progress-container">
+                <div class="progress-bar" id="progressBar"></div>
+                <span class="progress-text" id="progressText">0%</span>
+            </div>
+
             <div class="status">
                 <span class="status-dot" id="statusDot"></span>
                 <span class="status-text" id="statusText">Đang kết nối...</span>
@@ -299,6 +344,12 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.BATCH_SIZE = 25; // Play every 25 chunks
                 this.scheduledTime = 0;
 
+                // Progress tracking
+                this.totalChunksReceived = 0;
+                this.chunksPlayed = 0;
+                this.totalDuration = 0;
+                this.playedDuration = 0;
+
                 // DOM elements
                 this.textInput = document.getElementById('textInput');
                 this.speakBtn = document.getElementById('speakBtn');
@@ -309,6 +360,8 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.charCount = document.getElementById('charCount');
                 this.visualizerCanvas = document.getElementById('visualizer');
                 this.canvasCtx = this.visualizerCanvas.getContext('2d');
+                this.progressBar = document.getElementById('progressBar');
+                this.progressText = document.getElementById('progressText');
 
                 this.init();
             }
@@ -342,6 +395,11 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             updateStatus(status, text) {
                 this.statusDot.className = 'status-dot ' + status;
                 this.statusText.textContent = text;
+            }
+
+            updateProgress(percent) {
+                this.progressBar.style.setProperty('--progress', `${percent}%`);
+                this.progressText.textContent = `${Math.round(percent)}%`;
             }
 
             connect() {
@@ -401,6 +459,9 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.playQueue = [];
                 this.activeSources = [];
                 this.scheduledTime = 0;
+                this.totalChunksReceived = 0;
+                this.chunksPlayed = 0;
+                this.updateProgress(0);
                 this.updateStatus('speaking', 'Đang chuyển đổi...');
                 this.speakBtn.disabled = true;
 
@@ -463,8 +524,9 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 const buffer = this.base64ToArrayBuffer(base64Data);
                 const pcm16 = new Int16Array(buffer);
                 this.pendingChunks.push(pcm16);
+                this.totalChunksReceived++;
 
-                const total = this.pendingChunks.length;
+                const total = this.totalChunksReceived;
                 this.updateStatus('speaking', `Nhận ${total} chunks...`);
 
                 // Batch and play every BATCH_SIZE chunks
@@ -546,6 +608,13 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                     // Remove from active sources
                     const idx = this.activeSources.indexOf(source);
                     if (idx > -1) this.activeSources.splice(idx, 1);
+
+                    // Update progress
+                    this.chunksPlayed += chunksToPlay.length;
+                    if (this.totalChunksReceived > 0) {
+                        const progress = (this.chunksPlayed / this.totalChunksReceived) * 100;
+                        this.updateProgress(Math.min(progress, 100));
+                    }
 
                     // Check if more to play
                     if (this.isStopped) return;
