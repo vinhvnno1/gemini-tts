@@ -291,8 +291,10 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.isConnected = false;
                 this.isSpeaking = false;
                 this.audioContext = null;
-                this.audioChunks = []; // Collect all chunks first
+                this.pendingChunks = []; // Chunks waiting to be played
+                this.playQueue = []; // Batched audio ready to play
                 this.isPlaying = false;
+                this.BATCH_SIZE = 25; // Play every 25 chunks
                 this.scheduledTime = 0;
 
                 // DOM elements
@@ -374,8 +376,10 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                         break;
                     case 'complete':
                         this.isSpeaking = false;
-                        // Play all collected audio
-                        this.playCollectedAudio();
+                        // Process remaining chunks
+                        if (this.pendingChunks.length > 0) {
+                            this.batchAndPlay(true);
+                        }
                         break;
                     case 'error':
                         this.isSpeaking = false;
@@ -390,9 +394,16 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 if (!text || !this.isConnected) return;
 
                 this.isSpeaking = true;
-                this.audioChunks = [];
+                this.pendingChunks = [];
+                this.playQueue = [];
+                this.scheduledTime = 0;
                 this.updateStatus('speaking', 'Đang chuyển đổi...');
                 this.speakBtn.disabled = true;
+
+                // Create audio context early
+                if (!this.audioContext) {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
 
                 this.ws.send(JSON.stringify({
                     type: 'tts',
@@ -403,7 +414,8 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             stop() {
                 this.isSpeaking = false;
                 this.isPlaying = false;
-                this.audioChunks = [];
+                this.pendingChunks = [];
+                this.playQueue = [];
                 if (this.audioContext) {
                     this.audioContext.close();
                     this.audioContext = null;
@@ -431,25 +443,33 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             addAudioChunk(base64Data) {
                 const buffer = this.base64ToArrayBuffer(base64Data);
                 const pcm16 = new Int16Array(buffer);
-                this.audioChunks.push(pcm16);
-                this.updateStatus('speaking', `Đang nhận... (${this.audioChunks.length} chunks)`);
+                this.pendingChunks.push(pcm16);
+
+                const total = this.pendingChunks.length;
+                this.updateStatus('speaking', `Nhận ${total} chunks...`);
+
+                // Batch and play every BATCH_SIZE chunks
+                if (this.pendingChunks.length >= this.BATCH_SIZE) {
+                    this.batchAndPlay(false);
+                }
             }
 
-            async playCollectedAudio() {
-                if (this.audioChunks.length === 0) {
-                    this.speakBtn.disabled = false;
-                    this.updateStatus('connected', 'Không có audio');
+            batchAndPlay(isFinal) {
+                if (this.pendingChunks.length === 0) {
+                    if (isFinal && !this.isPlaying) {
+                        this.onPlaybackComplete();
+                    }
                     return;
                 }
 
-                this.updateStatus('speaking', 'Đang phát...');
-                this.isPlaying = true;
+                // Take chunks from pending
+                const chunksToPlay = this.pendingChunks.splice(0, this.BATCH_SIZE);
 
-                // Merge all chunks into one buffer
-                const totalLength = this.audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                // Merge chunks
+                const totalLength = chunksToPlay.reduce((sum, chunk) => sum + chunk.length, 0);
                 const mergedPcm = new Int16Array(totalLength);
                 let offset = 0;
-                for (const chunk of this.audioChunks) {
+                for (const chunk of chunksToPlay) {
                     mergedPcm.set(chunk, offset);
                     offset += chunk.length;
                 }
@@ -460,14 +480,9 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                     float32[i] = mergedPcm[i] / 32768.0;
                 }
 
-                // Create audio context with correct sample rate
-                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
-                // Gemini outputs 24kHz, resample to audioContext rate
+                // Resample
                 const inputSampleRate = 24000;
                 const outputSampleRate = this.audioContext.sampleRate;
-
-                // Simple resampling
                 const resampleRatio = outputSampleRate / inputSampleRate;
                 const resampledLength = Math.floor(float32.length * resampleRatio);
                 const resampled = new Float32Array(resampledLength);
@@ -480,32 +495,45 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                     resampled[i] = float32[srcIndexFloor] * (1 - t) + float32[srcIndexCeil] * t;
                 }
 
-                // Create audio buffer
+                // Create and schedule audio buffer
                 const audioBuffer = this.audioContext.createBuffer(1, resampled.length, outputSampleRate);
                 audioBuffer.copyToChannel(resampled, 0);
 
-                // Create analyser for visualization
-                const analyser = this.audioContext.createAnalyser();
-                analyser.fftSize = 256;
-
-                // Create source and play
                 const source = this.audioContext.createBufferSource();
                 source.buffer = audioBuffer;
+
+                // Create analyser
+                const analyser = this.audioContext.createAnalyser();
+                analyser.fftSize = 256;
                 source.connect(analyser);
                 analyser.connect(this.audioContext.destination);
 
-                // Start visualization
+                // Schedule playback
+                const currentTime = this.audioContext.currentTime;
+                const startTime = Math.max(currentTime, this.scheduledTime);
+                this.scheduledTime = startTime + audioBuffer.duration;
+
+                this.isPlaying = true;
+                this.updateStatus('speaking', 'Đang phát...');
                 this.visualize(analyser);
 
                 source.onended = () => {
-                    this.isPlaying = false;
-                    this.speakBtn.disabled = false;
-                    this.audioChunks = [];
-                    this.updateStatus('connected', 'Hoàn thành');
-                    this.clearVisualizer();
+                    // Check if more to play
+                    if (this.playQueue.length > 0 || this.pendingChunks.length > 0) {
+                        // Continue playing
+                    } else if (!this.isSpeaking) {
+                        this.onPlaybackComplete();
+                    }
                 };
 
-                source.start();
+                source.start(startTime);
+            }
+
+            onPlaybackComplete() {
+                this.isPlaying = false;
+                this.speakBtn.disabled = false;
+                this.updateStatus('connected', 'Hoàn thành');
+                this.clearVisualizer();
             }
 
             visualize(analyser) {
