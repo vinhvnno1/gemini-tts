@@ -290,9 +290,11 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.ws = null;
                 this.isConnected = false;
                 this.isSpeaking = false;
+                this.isStopped = false;
                 this.audioContext = null;
                 this.pendingChunks = []; // Chunks waiting to be played
                 this.playQueue = []; // Batched audio ready to play
+                this.activeSources = []; // Track active audio sources
                 this.isPlaying = false;
                 this.BATCH_SIZE = 25; // Play every 25 chunks
                 this.scheduledTime = 0;
@@ -393,9 +395,11 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 const text = this.textInput.value.trim();
                 if (!text || !this.isConnected) return;
 
+                this.isStopped = false;
                 this.isSpeaking = true;
                 this.pendingChunks = [];
                 this.playQueue = [];
+                this.activeSources = [];
                 this.scheduledTime = 0;
                 this.updateStatus('speaking', 'Đang chuyển đổi...');
                 this.speakBtn.disabled = true;
@@ -412,14 +416,29 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             stop() {
+                this.isStopped = true;
                 this.isSpeaking = false;
                 this.isPlaying = false;
                 this.pendingChunks = [];
                 this.playQueue = [];
+
+                // Stop all active audio sources
+                for (const source of this.activeSources) {
+                    try {
+                        source.stop();
+                    } catch (e) {
+                        // Ignore errors if source already stopped
+                    }
+                }
+                this.activeSources = [];
+
+                // Close and recreate audio context
                 if (this.audioContext) {
                     this.audioContext.close();
                     this.audioContext = null;
                 }
+
+                this.scheduledTime = 0;
                 this.speakBtn.disabled = false;
                 this.updateStatus('connected', 'Đã dừng');
                 this.clearVisualizer();
@@ -455,6 +474,9 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             batchAndPlay(isFinal) {
+                // Don't play if stopped
+                if (this.isStopped) return;
+
                 if (this.pendingChunks.length === 0) {
                     if (isFinal && !this.isPlaying) {
                         this.onPlaybackComplete();
@@ -502,6 +524,9 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 const source = this.audioContext.createBufferSource();
                 source.buffer = audioBuffer;
 
+                // Track this source for stopping
+                this.activeSources.push(source);
+
                 // Create analyser
                 const analyser = this.audioContext.createAnalyser();
                 analyser.fftSize = 256;
@@ -518,7 +543,12 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.visualize(analyser);
 
                 source.onended = () => {
+                    // Remove from active sources
+                    const idx = this.activeSources.indexOf(source);
+                    if (idx > -1) this.activeSources.splice(idx, 1);
+
                     // Check if more to play
+                    if (this.isStopped) return;
                     if (this.playQueue.length > 0 || this.pendingChunks.length > 0) {
                         // Continue playing
                     } else if (!this.isSpeaking) {
