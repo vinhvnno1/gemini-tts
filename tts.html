@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text-to-Speech | Gemini AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f0f14;
+            --bg-secondary: #1a1a24;
+            --bg-card: rgba(255, 255, 255, 0.03);
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.7);
+            --text-muted: rgba(255, 255, 255, 0.4);
+            --accent-primary: #10b981;
+            --accent-secondary: #06b6d4;
+            --gradient-primary: linear-gradient(135deg, #10b981, #06b6d4);
+            --radius-md: 0.75rem;
+            --radius-lg: 1rem;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            background: var(--bg-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--radius-md);
+            padding: 1rem;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 1rem;
+            resize: vertical;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        textarea:focus {
+            border-color: var(--accent-primary);
+        }
+
+        textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            flex: 1;
+            min-width: 150px;
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: var(--radius-md);
+            font-family: inherit;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .status-dot.connected {
+            background: var(--accent-primary);
+        }
+
+        .status-dot.speaking {
+            background: var(--accent-secondary);
+            animation: pulse 0.5s ease-in-out infinite;
+        }
+
+        .status-dot.error {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.5;
+                transform: scale(1.2);
+            }
+        }
+
+        .status-text {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        /* Visualizer */
+        .visualizer {
+            height: 60px;
+            margin-top: 1rem;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+
+        .visualizer canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        footer {
+            text-align: center;
+            padding: 1.5rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        footer strong {
+            color: var(--text-secondary);
+        }
+
+        /* Character count */
+        .char-count {
+            text-align: right;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>🔊 Text to Speech</h1>
+            <p class="subtitle">Chuyển văn bản thành giọng nói với Gemini AI</p>
+        </header>
+
+        <div class="card">
+            <textarea id="textInput" placeholder="Nhập văn bản bạn muốn chuyển thành giọng nói...
+
+Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng nói sử dụng trí tuệ nhân tạo Gemini."></textarea>
+            <div class="char-count"><span id="charCount">0</span> ký tự</div>
+
+            <div class="controls">
+                <button class="btn btn-primary" id="speakBtn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Phát
+                </button>
+                <button class="btn btn-secondary" id="stopBtn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="6" y="4" width="4" height="16"></rect>
+                        <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                    Dừng
+                </button>
+                <button class="btn btn-secondary" id="clearBtn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"></path>
+                    </svg>
+                    Xóa
+                </button>
+            </div>
+
+            <div class="visualizer">
+                <canvas id="visualizer"></canvas>
+            </div>
+
+            <div class="status">
+                <span class="status-dot" id="statusDot"></span>
+                <span class="status-text" id="statusText">Đang kết nối...</span>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Powered by <strong>Gemini 2.0 Flash</strong> Native Audio</p>
+    </footer>
+
+    <script>
+        class TextToSpeech {
+            constructor() {
+                this.ws = null;
+                this.isConnected = false;
+                this.isSpeaking = false;
+                this.audioContext = null;
+                this.audioQueue = [];
+                this.isPlaying = false;
+
+                // DOM elements
+                this.textInput = document.getElementById('textInput');
+                this.speakBtn = document.getElementById('speakBtn');
+                this.stopBtn = document.getElementById('stopBtn');
+                this.clearBtn = document.getElementById('clearBtn');
+                this.statusDot = document.getElementById('statusDot');
+                this.statusText = document.getElementById('statusText');
+                this.charCount = document.getElementById('charCount');
+                this.visualizerCanvas = document.getElementById('visualizer');
+                this.canvasCtx = this.visualizerCanvas.getContext('2d');
+
+                this.init();
+            }
+
+            init() {
+                // Event listeners
+                this.speakBtn.addEventListener('click', () => this.speak());
+                this.stopBtn.addEventListener('click', () => this.stop());
+                this.clearBtn.addEventListener('click', () => this.clear());
+                this.textInput.addEventListener('input', () => this.updateCharCount());
+
+                // Resize canvas
+                this.resizeCanvas();
+                window.addEventListener('resize', () => this.resizeCanvas());
+
+                // Connect WebSocket
+                this.connect();
+            }
+
+            resizeCanvas() {
+                const rect = this.visualizerCanvas.getBoundingClientRect();
+                this.visualizerCanvas.width = rect.width * window.devicePixelRatio;
+                this.visualizerCanvas.height = rect.height * window.devicePixelRatio;
+                this.canvasCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            }
+
+            updateCharCount() {
+                this.charCount.textContent = this.textInput.value.length;
+            }
+
+            updateStatus(status, text) {
+                this.statusDot.className = 'status-dot ' + status;
+                this.statusText.textContent = text;
+            }
+
+            connect() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/tts`;
+
+                this.ws = new WebSocket(wsUrl);
+
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.updateStatus('connected', 'Sẵn sàng');
+                };
+
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    this.handleMessage(message);
+                };
+
+                this.ws.onerror = () => {
+                    this.updateStatus('error', 'Lỗi kết nối');
+                };
+
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.updateStatus('', 'Mất kết nối');
+                    setTimeout(() => this.connect(), 3000);
+                };
+            }
+
+            handleMessage(message) {
+                switch (message.type) {
+                    case 'audio':
+                        this.queueAudio(message.data);
+                        break;
+                    case 'complete':
+                        this.isSpeaking = false;
+                        if (!this.isPlaying) {
+                            this.updateStatus('connected', 'Hoàn thành');
+                        }
+                        break;
+                    case 'error':
+                        this.isSpeaking = false;
+                        this.updateStatus('error', 'Lỗi: ' + message.message);
+                        break;
+                }
+            }
+
+            async speak() {
+                const text = this.textInput.value.trim();
+                if (!text || !this.isConnected) return;
+
+                this.isSpeaking = true;
+                this.audioQueue = [];
+                this.updateStatus('speaking', 'Đang chuyển đổi...');
+                this.speakBtn.disabled = true;
+
+                this.ws.send(JSON.stringify({
+                    type: 'tts',
+                    text: text
+                }));
+            }
+
+            stop() {
+                this.isSpeaking = false;
+                this.audioQueue = [];
+                this.speakBtn.disabled = false;
+                this.updateStatus('connected', 'Đã dừng');
+                this.clearVisualizer();
+            }
+
+            clear() {
+                this.textInput.value = '';
+                this.updateCharCount();
+                this.stop();
+            }
+
+            base64ToArrayBuffer(base64) {
+                const binary = atob(base64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                return bytes.buffer;
+            }
+
+            pcm16ToFloat32(pcm16Buffer) {
+                const pcm16 = new Int16Array(pcm16Buffer);
+                const float32 = new Float32Array(pcm16.length);
+                for (let i = 0; i < pcm16.length; i++) {
+                    float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7FFF);
+                }
+                return float32;
+            }
+
+            queueAudio(base64Data) {
+                const buffer = this.base64ToArrayBuffer(base64Data);
+                const float32 = this.pcm16ToFloat32(buffer);
+                this.audioQueue.push(float32);
+
+                this.updateStatus('speaking', 'Đang phát...');
+
+                if (!this.isPlaying) {
+                    this.playNextAudio();
+                }
+            }
+
+            async playNextAudio() {
+                if (this.audioQueue.length === 0) {
+                    this.isPlaying = false;
+                    this.speakBtn.disabled = false;
+                    if (!this.isSpeaking) {
+                        this.updateStatus('connected', 'Hoàn thành');
+                    }
+                    this.clearVisualizer();
+                    return;
+                }
+
+                this.isPlaying = true;
+
+                if (!this.audioContext) {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 24000
+                    });
+                }
+
+                const float32Data = this.audioQueue.shift();
+
+                // Create audio buffer
+                const audioBuffer = this.audioContext.createBuffer(1, float32Data.length, 24000);
+                audioBuffer.copyToChannel(float32Data, 0);
+
+                // Create analyser for visualization
+                const analyser = this.audioContext.createAnalyser();
+                analyser.fftSize = 256;
+
+                // Create source and play
+                const source = this.audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(analyser);
+                analyser.connect(this.audioContext.destination);
+
+                // Start visualization
+                this.visualize(analyser);
+
+                source.onended = () => {
+                    this.playNextAudio();
+                };
+
+                source.start();
+            }
+
+            visualize(analyser) {
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                const draw = () => {
+                    if (!this.isPlaying) return;
+
+                    requestAnimationFrame(draw);
+                    analyser.getByteFrequencyData(dataArray);
+
+                    const width = this.visualizerCanvas.width / window.devicePixelRatio;
+                    const height = this.visualizerCanvas.height / window.devicePixelRatio;
+
+                    this.canvasCtx.clearRect(0, 0, width, height);
+
+                    const barWidth = (width / bufferLength) * 2.5;
+                    let x = 0;
+
+                    for (let i = 0; i < bufferLength; i++) {
+                        const barHeight = (dataArray[i] / 255) * height * 0.9;
+
+                        const gradient = this.canvasCtx.createLinearGradient(0, height, 0, height - barHeight);
+                        gradient.addColorStop(0, 'rgba(16, 185, 129, 0.8)');
+                        gradient.addColorStop(1, 'rgba(6, 182, 212, 0.8)');
+
+                        this.canvasCtx.fillStyle = gradient;
+                        this.canvasCtx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
+
+                        x += barWidth;
+                    }
+                };
+
+                draw();
+            }
+
+            clearVisualizer() {
+                const width = this.visualizerCanvas.width / window.devicePixelRatio;
+                const height = this.visualizerCanvas.height / window.devicePixelRatio;
+                this.canvasCtx.clearRect(0, 0, width, height);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            new TextToSpeech();
+        });
+    </script>
+</body>
+
+</html>
