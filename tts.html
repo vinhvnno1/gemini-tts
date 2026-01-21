@@ -294,12 +294,17 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                     </svg>
                     Phát
                 </button>
-                <button class="btn btn-secondary" id="stopBtn">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <button class="btn btn-secondary" id="pausePlayBtn">
+                    <svg id="pauseIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2">
                         <rect x="6" y="4" width="4" height="16"></rect>
                         <rect x="14" y="4" width="4" height="16"></rect>
                     </svg>
-                    Dừng
+                    <svg id="playIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" style="display:none;">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    <span id="pausePlayText">Dừng</span>
                 </button>
                 <button class="btn btn-secondary" id="clearBtn">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -354,7 +359,10 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 // DOM elements
                 this.textInput = document.getElementById('textInput');
                 this.speakBtn = document.getElementById('speakBtn');
-                this.stopBtn = document.getElementById('stopBtn');
+                this.pausePlayBtn = document.getElementById('pausePlayBtn');
+                this.pauseIcon = document.getElementById('pauseIcon');
+                this.playIcon = document.getElementById('playIcon');
+                this.pausePlayText = document.getElementById('pausePlayText');
                 this.clearBtn = document.getElementById('clearBtn');
                 this.statusDot = document.getElementById('statusDot');
                 this.statusText = document.getElementById('statusText');
@@ -370,7 +378,7 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             init() {
                 // Event listeners
                 this.speakBtn.addEventListener('click', () => this.speak());
-                this.stopBtn.addEventListener('click', () => this.stop());
+                this.pausePlayBtn.addEventListener('click', () => this.togglePausePlay());
                 this.clearBtn.addEventListener('click', () => this.clear());
                 this.textInput.addEventListener('input', () => this.updateCharCount());
 
@@ -484,8 +492,28 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 }));
             }
 
-            stop() {
-                // This is now a PAUSE function - preserve pending chunks
+            togglePausePlay() {
+                if (this.isPaused) {
+                    this.resume();
+                } else {
+                    this.pause();
+                }
+            }
+
+            updatePausePlayButton(showPlay) {
+                if (showPlay) {
+                    this.pauseIcon.style.display = 'none';
+                    this.playIcon.style.display = 'block';
+                    this.pausePlayText.textContent = 'Tiếp tục';
+                } else {
+                    this.pauseIcon.style.display = 'block';
+                    this.playIcon.style.display = 'none';
+                    this.pausePlayText.textContent = 'Dừng';
+                }
+            }
+
+            pause() {
+                // Preserve pending chunks for resume
                 this.isPaused = true;
                 this.isPlaying = false;
 
@@ -506,6 +534,7 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
 
                 this.scheduledTime = 0;
                 this.speakBtn.disabled = false;
+                this.updatePausePlayButton(true); // Show play icon
                 this.updateStatus('connected', 'Tạm dừng');
                 this.clearVisualizer();
             }
@@ -566,6 +595,13 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
                 this.totalChunksReceived++;
 
                 const total = this.totalChunksReceived;
+
+                // If paused, just buffer don't play
+                if (this.isPaused) {
+                    this.updateStatus('connected', `Đang buffer: ${this.pendingChunks.length} chunks`);
+                    return;
+                }
+
                 this.updateStatus('speaking', `Nhận ${total} chunks...`);
 
                 // Batch and play every BATCH_SIZE chunks
@@ -575,8 +611,8 @@ Ví dụ: Xin chào! Đây là ứng dụng chuyển văn bản thành giọng n
             }
 
             batchAndPlay(isFinal) {
-                // Don't play if stopped
-                if (this.isStopped) return;
+                // Don't play if stopped or paused
+                if (this.isStopped || this.isPaused) return;
 
                 if (this.pendingChunks.length === 0) {
                     if (isFinal && !this.isPlaying) {
