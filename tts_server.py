@@ -1,18 +1,21 @@
 """
 Text-to-Speech Server với Gemini 2.0 Flash Native Audio
-Nhập text -> Gemini chuyển thành giọng nói real-time
+Có hệ thống đăng nhập Admin
 """
 
 import asyncio
 import json
 import os
 import base64
+import secrets
+import hashlib
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Response, Depends, Cookie
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
@@ -23,6 +26,10 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is required")
+
+# Admin credentials (có thể đổi qua env)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 CONFIG = {
@@ -40,16 +47,105 @@ app = FastAPI(title="Text-to-Speech with Gemini")
 # Get current directory
 BASE_DIR = Path(__file__).parent
 
+# Session storage (in-memory, reset khi restart)
+sessions = {}
 
-class TTSRequest(BaseModel):
-    text: str
-    voice: str = "default"
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def create_session(username: str) -> str:
+    """Tạo session token mới"""
+    token = secrets.token_hex(32)
+    sessions[token] = {
+        "username": username,
+        "created_at": datetime.now(),
+        "expires_at": datetime.now() + timedelta(hours=24)
+    }
+    return token
+
+
+def verify_session(token: str) -> bool:
+    """Kiểm tra session token còn hợp lệ không"""
+    if not token or token not in sessions:
+        return False
+    session = sessions[token]
+    if datetime.now() > session["expires_at"]:
+        del sessions[token]
+        return False
+    return True
+
+
+async def get_current_user(session_token: str = Cookie(None)):
+    """Dependency để kiểm tra đăng nhập"""
+    if not verify_session(session_token):
+        return None
+    return sessions[session_token]["username"]
 
 
 # Health check
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "model": MODEL}
+
+
+# Login API
+@app.post("/api/login")
+async def login(request: LoginRequest, response: Response):
+    if request.username == ADMIN_USERNAME and request.password == ADMIN_PASSWORD:
+        token = create_session(request.username)
+        response.set_cookie(
+            key="session_token",
+            value=token,
+            httponly=True,
+            max_age=86400,  # 24 hours
+            samesite="lax"
+        )
+        return {"success": True, "message": "Đăng nhập thành công"}
+    return JSONResponse(
+        status_code=401,
+        content={"success": False, "message": "Sai tên đăng nhập hoặc mật khẩu"}
+    )
+
+
+# Logout API
+@app.post("/api/logout")
+async def logout(response: Response, session_token: str = Cookie(None)):
+    if session_token and session_token in sessions:
+        del sessions[session_token]
+    response.delete_cookie("session_token")
+    return {"success": True, "message": "Đã đăng xuất"}
+
+
+# Check auth API
+@app.get("/api/me")
+async def get_me(session_token: str = Cookie(None)):
+    if verify_session(session_token):
+        return {"logged_in": True, "username": sessions[session_token]["username"]}
+    return {"logged_in": False}
+
+
+# Serve login page
+@app.get("/")
+async def serve_index(session_token: str = Cookie(None)):
+    if verify_session(session_token):
+        return RedirectResponse(url="/tts")
+    return FileResponse(BASE_DIR / "login.html")
+
+
+@app.get("/login")
+async def serve_login():
+    return FileResponse(BASE_DIR / "login.html")
+
+
+# Serve TTS page (protected)
+@app.get("/tts")
+async def serve_tts(session_token: str = Cookie(None)):
+    if not verify_session(session_token):
+        return RedirectResponse(url="/")
+    return FileResponse(BASE_DIR / "tts.html")
 
 
 # WebSocket TTS handler - real-time streaming
@@ -109,23 +205,30 @@ async def websocket_tts(websocket: WebSocket):
         print(f"WebSocket error: {e}")
 
 
-# Serve TTS page
-@app.get("/")
-async def serve_index():
-    return FileResponse(BASE_DIR / "tts.html")
-
-
+# Serve static files
 @app.get("/{filename}")
-async def serve_file(filename: str):
+async def serve_file(filename: str, session_token: str = Cookie(None)):
+    # Allow static assets without auth
+    if filename.endswith(('.css', '.js', '.png', '.ico', '.svg')):
+        file_path = BASE_DIR / filename
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+    
+    # Protect HTML files
+    if not verify_session(session_token):
+        return RedirectResponse(url="/")
+    
     file_path = BASE_DIR / filename
     if file_path.exists() and file_path.is_file():
         return FileResponse(file_path)
-    return FileResponse(BASE_DIR / "tts.html")
+    return RedirectResponse(url="/tts")
 
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 3000))
-    print("🎤 Starting Text-to-Speech Server...")
+    print("🎤 Starting Text-to-Speech Server with Admin Auth...")
     print(f"📡 Open http://localhost:{port} in your browser")
+    print(f"👤 Default login: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
     uvicorn.run(app, host="0.0.0.0", port=port)
+
