@@ -1,11 +1,13 @@
 """
 Text-to-Speech Server với Gemini 2.0 Flash Native Audio
 Nhập text -> Gemini chuyển thành giọng nói real-time
+Hỗ trợ đọc văn bản dài bằng cách chia nhỏ
 """
 
 import asyncio
 import json
 import os
+import re
 import base64
 from pathlib import Path
 
@@ -27,8 +29,12 @@ CONFIG = {
     "system_instruction": """You are a text-to-speech assistant.
 When given text, read it aloud naturally and expressively.
 Match the language of the input text.
-Do not add any commentary, just read the text as given.""",
+Do not add any commentary, just read the text as given.
+Read the COMPLETE text, do not stop early or summarize.""",
 }
+
+# Max characters per chunk (để đảm bảo đọc hết)
+MAX_CHUNK_SIZE = 500
 
 # Initialize
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -36,6 +42,49 @@ app = FastAPI(title="Text-to-Speech with Gemini")
 
 # Get current directory
 BASE_DIR = Path(__file__).parent
+
+
+def split_text_into_chunks(text: str, max_size: int = MAX_CHUNK_SIZE) -> list:
+    """Chia text thành các đoạn nhỏ theo câu, không vượt quá max_size"""
+    if len(text) <= max_size:
+        return [text]
+    
+    # Split by sentences (Vietnamese and English)
+    sentences = re.split(r'(?<=[.!?。！？])\s*', text)
+    
+    chunks = []
+    current_chunk = ""
+    
+    for sentence in sentences:
+        if not sentence.strip():
+            continue
+            
+        # Nếu 1 câu quá dài, chia theo dấu phẩy hoặc theo độ dài
+        if len(sentence) > max_size:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+            
+            # Chia theo dấu phẩy
+            sub_parts = re.split(r'(?<=[,，;；])\s*', sentence)
+            for part in sub_parts:
+                if len(current_chunk) + len(part) <= max_size:
+                    current_chunk += part
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = part
+        elif len(current_chunk) + len(sentence) <= max_size:
+            current_chunk += sentence + " "
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sentence + " "
+    
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks if chunks else [text]
 
 
 # Health check
@@ -60,32 +109,47 @@ async def websocket_tts(websocket: WebSocket):
                 if not text:
                     continue
 
-                print(f"TTS request: {text[:50]}...")
+                # Chia text thành các đoạn nhỏ
+                chunks = split_text_into_chunks(text)
+                total_chunks = len(chunks)
+                print(f"TTS request: {len(text)} chars, {total_chunks} chunks")
 
                 try:
-                    async with client.aio.live.connect(
-                        model=MODEL,
-                        config=CONFIG
-                    ) as session:
-                        await session.send_client_content(
-                            turns=[{"role": "user", "parts": [{"text": f"Please read this text aloud: {text}"}]}],
-                            turn_complete=True
-                        )
+                    for chunk_idx, chunk in enumerate(chunks):
+                        print(f"Processing chunk {chunk_idx + 1}/{total_chunks}: {chunk[:50]}...")
+                        
+                        # Thông báo tiến trình
+                        await websocket.send_json({
+                            "type": "progress",
+                            "current": chunk_idx + 1,
+                            "total": total_chunks
+                        })
+                        
+                        async with client.aio.live.connect(
+                            model=MODEL,
+                            config=CONFIG
+                        ) as session:
+                            await session.send_client_content(
+                                turns=[{"role": "user", "parts": [{"text": f"Read this text aloud completely: {chunk}"}]}],
+                                turn_complete=True
+                            )
 
-                        turn = session.receive()
-                        async for response in turn:
-                            if response.server_content and response.server_content.model_turn:
-                                for part in response.server_content.model_turn.parts:
-                                    if part.inline_data and part.inline_data.data:
-                                        audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
-                                        await websocket.send_json({
-                                            "type": "audio",
-                                            "data": audio_b64
-                                        })
+                            turn = session.receive()
+                            async for response in turn:
+                                if response.server_content and response.server_content.model_turn:
+                                    for part in response.server_content.model_turn.parts:
+                                        if part.inline_data and part.inline_data.data:
+                                            audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
+                                            await websocket.send_json({
+                                                "type": "audio",
+                                                "data": audio_b64
+                                            })
 
-                            if response.server_content and response.server_content.turn_complete:
-                                await websocket.send_json({"type": "complete"})
-                                break
+                                if response.server_content and response.server_content.turn_complete:
+                                    break
+                    
+                    # Tất cả chunks đã xong
+                    await websocket.send_json({"type": "complete"})
 
                 except Exception as e:
                     print(f"TTS error: {e}")
@@ -117,5 +181,3 @@ if __name__ == "__main__":
     print("🎤 Starting Text-to-Speech Server...")
     print(f"📡 Open http://localhost:{port} in your browser")
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
